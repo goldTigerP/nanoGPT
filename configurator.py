@@ -23,9 +23,11 @@ for arg in sys.argv[1:]:
         assert not arg.startswith('--')
         config_file = arg
         print(f"Overriding config with {config_file}:")
-        with open(config_file) as f:
-            print(f.read())
-        exec(open(config_file).read())
+        # open using utf-8 to avoid UnicodeDecodeError on Windows when config files contain non-ASCII
+        with open(config_file, encoding='utf-8') as f:
+            content = f.read()
+            print(content)
+        exec(content)
     else:
         # assume it's a --key=value argument
         assert arg.startswith('--')
