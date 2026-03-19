@@ -205,7 +205,59 @@ checkpoint = None # free up memory
 if compile:
     print("compiling the model... (takes a ~minute)")
     unoptimized_model = model
-    model = torch.compile(model) # requires PyTorch 2.0
+    try:
+        # If Triton is not available, torch.compile may still succeed but raise
+        # at runtime when inductor attempts to use Triton. To avoid that we
+        # proactively check for the triton package here and skip compilation if
+        # it's missing.
+        try:
+            import triton  # type: ignore
+            triton_available = True
+        except Exception:
+            triton_available = False
+        if not triton_available:
+            print("Triton not available: skipping torch.compile to avoid runtime errors on this platform.")
+            compile = False
+            model = unoptimized_model
+        else:
+            model = torch.compile(model) # requires PyTorch 2.0
+    except Exception as e:
+        # On some platforms (notably Windows) Triton may be unavailable which
+        # causes torch._inductor to fail during compilation. Fall back to the
+        # uncompiled model so training can continue.
+        print("WARNING: model compilation failed, falling back to uncompiled model.")
+        print(f"Compilation error: {e}")
+        print("You can bypass this by running with --compile=False or using a Linux CUDA build with Triton installed.")
+        compile = False
+        model = unoptimized_model
+
+# Helper to safely call model forward and fall back to uncompiled model if
+# a TritonMissing (or related) error occurs at runtime.
+def safe_model_call(model_ref, *args, **kwargs):
+    try:
+        return model_ref(*args, **kwargs)
+    except Exception as e:
+        # torch._inductor raises a specific TritonMissing exception when triton
+        # is not installed/usable. We don't want the whole training to crash for
+        # that; detect that case and fall back to the unoptimized model.
+        try:
+            from torch._inductor.exc import TritonMissing
+            is_triton_missing = isinstance(e, TritonMissing) or 'TritonMissing' in type(e).__name__
+        except Exception:
+            is_triton_missing = 'triton' in str(e).lower() or 'tritonmissing' in str(type(e)).lower()
+        if is_triton_missing:
+            print("WARNING: TritonMissing encountered during model execution. Falling back to uncompiled model.")
+            # unoptimized_model is captured from outer scope when compile was run
+            try:
+                model_fallback = unoptimized_model
+            except NameError:
+                # if unoptimized_model not defined, just re-raise
+                raise
+            # ensure we use the CPU/GPU device as before
+            model_fallback.to(device)
+            return model_fallback(*args, **kwargs)
+        # otherwise re-raise
+        raise
 
 # wrap model into DDP container
 if ddp:
@@ -221,7 +273,7 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
+                logits, loss = safe_model_call(model, X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -297,7 +349,7 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
-            logits, loss = model(X, Y)
+            logits, loss = safe_model_call(model, X, Y)
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')

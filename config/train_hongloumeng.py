@@ -34,7 +34,7 @@ decay_lr = True # 是否在训练过程中衰减学习率
 warmup_iters = 1000 # 预热步数，对小数据集来说1000步足够
 
 # 系统设置
-device = 'cpu' # 使用CPU训练，稳定且兼容性好
+device = 'cuda' # 使用GPU训练，若无GPU可用可通过命令行覆盖为 'cpu'
 dtype = 'float32' # 使用float32确保稳定性
 compile = True # 使用PyTorch 2.0来编译模型以获得更好的性能
 
