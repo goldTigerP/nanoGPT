@@ -24,14 +24,14 @@ bias = False
 
 # AdamW优化器
 learning_rate = 1e-3    # 提高学习率，更快收敛
-max_iters = 1000        # 大幅减少训练步数，从15000到1000
-lr_decay_iters = 1000
+max_iters = 10          # 只训练10轮
+lr_decay_iters = 10
 min_lr = 1e-4
 beta2 = 0.99
 
 # 学习率衰减设置
 decay_lr = True
-warmup_iters = 100      # 减少预热步数
+warmup_iters = 2        # 减少预热步数
 
 # 系统设置
 device = 'cpu'
